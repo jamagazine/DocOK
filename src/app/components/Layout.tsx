@@ -40,6 +40,8 @@ export function Layout() {
   const [editingName, setEditingName] = useState(false);
   const [nameVal, setNameVal] = useState(projectName);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'warning' | 'error'>('idle');
+  const [syncError, setSyncError] = useState(false);
 
   // Settings Panel local state
   const [localApiKey, setLocalApiKey] = useState(yandexConfig.apiKey);
@@ -62,11 +64,59 @@ export function Layout() {
       .catch(e => console.error('Config fetch error:', e));
   }, [setConfigKeys]);
 
-  const hasYandexKeys = Boolean(yandexConfig.apiKey && yandexConfig.folderId);
+  // LIVE STATUS based on local state (for instant feedback while typing)
+  const currentIsFully = Boolean(localApiKey.trim() && localFolderId.trim());
+  const currentIsPartial = Boolean((localApiKey.trim() && !localFolderId.trim()) || (!localApiKey.trim() && localFolderId.trim()));
+  const currentIsNone = !localApiKey.trim() && !localFolderId.trim();
+
+  // Clear sync error when typing
+  useEffect(() => {
+    if (syncError) setSyncError(false);
+  }, [localApiKey, localFolderId, syncError]);
 
   const handleSaveSettings = () => {
-    saveYandexConfig({ apiKey: localApiKey, folderId: localFolderId });
-    setIsSettingsOpen(false);
+    // 1. Instant Optimistic UI Update
+    if (currentIsFully) {
+      setSaveStatus('success');
+      setTimeout(() => {
+        setIsSettingsOpen(false);
+        setSaveStatus('idle');
+      }, 300);
+    } else if (currentIsPartial) {
+      setSaveStatus('error');
+      // Do NOT hide panel
+      setTimeout(() => setSaveStatus('idle'), 1500);
+    } else {
+      // currentIsNone
+      setSaveStatus('warning');
+      setTimeout(() => {
+        setIsSettingsOpen(false);
+        setSaveStatus('idle');
+      }, 300);
+    }
+
+    // 2. Background Data Sync (Fire and Forget)
+    const config = { apiKey: localApiKey, folderId: localFolderId };
+    saveYandexConfig(config);
+    
+    fetch('http://localhost:8000/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        keys: { 
+          YANDEX_API_KEY: localApiKey, 
+          YANDEX_FOLDER_ID: localFolderId 
+        } 
+      }),
+    })
+    .then(async (res) => {
+      if (!res.ok) throw new Error('API Sync Error');
+      setSyncError(false);
+    })
+    .catch(e => {
+      console.error('Failed to sync config to backend:', e);
+      setSyncError(true);
+    });
   };
 
   const activeIndex = STEPS.findIndex((s) => {
@@ -99,59 +149,96 @@ export function Layout() {
 
             {/* Global Navigation */}
             <div className="flex items-center gap-1">
-              <button className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-900 bg-gray-100/80 rounded-md transition-colors">
+              <button className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-900 bg-gray-100/80 rounded-lg transition-colors">
                 <LayoutTemplate size={16} className="text-gray-700" />
                 <span className="hidden sm:inline">Рабочая область</span>
               </button>
-              <button className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-500 hover:text-gray-900 hover:bg-gray-50 rounded-md transition-colors">
+              <button className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-500 hover:text-gray-900 hover:bg-gray-50 rounded-lg transition-colors">
                 <List size={16} />
                 <span className="hidden sm:inline">Список проектов</span>
               </button>
-              <div className="w-px h-4 bg-gray-200 mx-1" />
-              <button
-                onClick={() => setIsSettingsOpen(!isSettingsOpen)}
-                className={`p-1.5 rounded-md transition-all flex items-center justify-center ${
-                  hasYandexKeys 
-                    ? 'text-blue-600 bg-blue-50 hover:bg-blue-100' 
-                    : 'bg-orange-500 text-white animate-pulse hover:bg-orange-600'
-                }`}
-                title={!hasYandexKeys ? 'Требуется настройка нейросети' : 'Настройки нейросети'}
-              >
-                <Cloud size={18} />
-              </button>
             </div>
+          </div>
+
+          {/* Right Header Actions - Cloud Settings Button */}
+          <div className="flex items-center gap-3">
+            {/* Inline Desktop Settings */}
+            {isSettingsOpen && (
+              <div className="hidden md:flex items-center gap-4 animate-in fade-in slide-in-from-right-2 duration-300">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest whitespace-nowrap">API Key</span>
+                  <input
+                    type="password"
+                    value={localApiKey}
+                    onChange={(e) => setLocalApiKey(e.target.value)}
+                    placeholder="AQVN..."
+                    className="w-40 px-3 py-1.5 bg-gray-50/50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all text-sm font-medium text-gray-900"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest whitespace-nowrap">Folder ID</span>
+                  <input
+                    type="text"
+                    value={localFolderId}
+                    onChange={(e) => setLocalFolderId(e.target.value)}
+                    placeholder="b1g..."
+                    className="w-36 px-3 py-1.5 bg-gray-50/50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all text-sm font-medium text-gray-900"
+                  />
+                </div>
+                <button
+                  onClick={handleSaveSettings}
+                  className={`px-5 py-1.5 text-xs font-bold text-white rounded-lg transition-all active:scale-95 shadow-sm
+                    ${saveStatus === 'success' ? 'bg-green-600' : saveStatus === 'error' ? 'bg-red-600 animate-shake' : saveStatus === 'warning' ? 'bg-yellow-400' : 'bg-blue-600 hover:bg-blue-700'}`}
+                >
+                  Ок
+                </button>
+              </div>
+            )}
+
+            <button
+              onClick={() => setIsSettingsOpen(!isSettingsOpen)}
+              className={`p-1.5 rounded-lg transition-all flex items-center justify-center shrink-0 border-2
+                ${syncError
+                  ? 'bg-red-50 text-red-600 border-red-400 hover:bg-red-100 animate-shake'
+                  : currentIsFully 
+                  ? 'text-green-600 bg-green-50 border-green-100 hover:bg-green-100' 
+                  : currentIsPartial
+                  ? 'bg-red-50 text-red-600 border-red-100 hover:bg-red-100 animate-pulse'
+                  : 'bg-yellow-50 text-yellow-600 border-yellow-100 hover:bg-yellow-100 animate-pulse'
+                }`}
+              title={syncError ? 'Ошибка сохранения на сервер' : currentIsNone ? 'Требуется настройка' : currentIsPartial ? 'Данные не до конца заполнены' : 'Настройки нейросети'}
+            >
+              <Cloud size={18} fill={currentIsFully && !syncError ? 'currentColor' : 'none'} className={currentIsFully && !syncError ? 'opacity-40' : ''} />
+            </button>
           </div>
         </header>
 
-        {/* Settings Panel */}
+        {/* Mobile Settings Panel (Dropdown) */}
         {isSettingsOpen && (
-          <div className="absolute top-full left-0 right-0 bg-white border-b border-gray-200 shadow-md px-6 z-40 h-[57px] flex items-center origin-top animate-in slide-in-from-top-2 fade-in duration-200">
-            <div className="max-w-5xl mx-auto w-full flex flex-row items-center justify-center gap-8">
-              <div className="flex flex-row items-center gap-3">
-                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest whitespace-nowrap">API Key</span>
+          <div className="md:hidden absolute top-full left-0 right-0 bg-white border-b border-gray-200 shadow-md px-6 z-40 h-[64px] flex items-center origin-top animate-in slide-in-from-top-2 fade-in duration-200">
+            <div className="w-full flex flex-row items-center justify-between gap-3">
+              <div className="flex-1 flex gap-2">
                 <input
                   type="password"
                   value={localApiKey}
                   onChange={(e) => setLocalApiKey(e.target.value)}
-                  placeholder="AQVN..."
-                  className="w-48 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm"
+                  placeholder="API Key"
+                  className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none text-sm"
                 />
-              </div>
-              <div className="flex flex-row items-center gap-3">
-                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest whitespace-nowrap">Folder ID</span>
                 <input
                   type="text"
                   value={localFolderId}
                   onChange={(e) => setLocalFolderId(e.target.value)}
-                  placeholder="b1g..."
-                  className="w-40 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm"
+                  placeholder="Folder ID"
+                  className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none text-sm"
                 />
               </div>
               <button
                 onClick={handleSaveSettings}
-                className="px-6 py-1.5 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-all shadow-sm active:scale-95"
+                className={`px-5 py-2 text-sm font-bold text-white rounded-lg shrink-0 transition-colors
+                  ${saveStatus === 'success' ? 'bg-green-600' : saveStatus === 'error' ? 'bg-red-600' : saveStatus === 'warning' ? 'bg-yellow-400' : 'bg-blue-600'}`}
               >
-                Сохранить
+                Ок
               </button>
             </div>
           </div>

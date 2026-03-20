@@ -25,7 +25,6 @@ import {
 } from '../utils/fileUtils';
 import { parsePdfGeometry, PdfGeometry } from '../utils/pdfUtils';
 import { FileUploadZone } from '../components/FileUploadZone';
-import { ColumnMapperModal } from '../components/ColumnMapperModal';
 import { EditableTable, ColumnDef } from '../components/EditableTable';
 
 const SPEC_COLUMNS: ColumnDef[] = [
@@ -78,11 +77,7 @@ export function SpecificationPage() {
   const [backupRows, setBackupRows] = useState<SpecRow[]>([]);
   const dragCounter = React.useRef(0);
 
-  // ── Mapper state ───────────────────────────────────────────────────────────
-  const [mapperOpen, setMapperOpen] = useState(false);
-  const [parsedHeaders, setParsedHeaders] = useState<string[]>([]);
-  const [parsedRawRows, setParsedRawRows] = useState<string[][]>([]);
-  const [detectedMapping, setDetectedMapping] = useState<Record<string, DetectedMapping>>({});
+  // ── File parsing state ───────────────────────────────────────────────────
   const [parsedRawGrid, setParsedRawGrid] = useState<string[][]>([]);
   const [parsedRawGridX, setParsedRawGridX] = useState<number[] | undefined>(undefined);
   const [pdfGeometry, setPdfGeometry] = useState<PdfGeometry | null>(null);
@@ -95,7 +90,7 @@ export function SpecificationPage() {
     setLoading(true);
     setError(null);
     try {
-      const { headers, rows, gridX } = await parseFile(file);
+      const { headers, rows: parsedRawRows, gridX } = await parseFile(file);
       
       // Дополнительно парсим геометрию для "Цифрового двойника"
       if (file.name.toLowerCase().endsWith('.pdf')) {
@@ -103,45 +98,41 @@ export function SpecificationPage() {
         setPdfGeometry(geometry);
       }
 
-      setParsedRawGrid([headers, ...rows]);
+      setParsedRawGrid([headers, ...parsedRawRows]);
       setParsedRawGridX(gridX);
       const detected = autoDetectMapping(headers, SPEC_ALIASES);
-      setParsedHeaders(headers);
-      setParsedRawRows(rows);
-      setDetectedMapping(detected);
-      setMapperOpen(true);
+      
+      const mapping = Object.fromEntries(
+        Object.entries(detected).map(([key, value]) => [key, value.index])
+      );
+
+      const newRows: SpecRow[] = parsedRawRows.map((row) => ({
+        id: genId(),
+        name: mapping.name !== undefined ? (row[mapping.name] || '') : '',
+        brand: mapping.brand !== undefined ? (row[mapping.brand] || '') : '',
+        code: mapping.code !== undefined ? (row[mapping.code] || '') : '',
+        supplier: mapping.supplier !== undefined ? (row[mapping.supplier] || '') : '',
+        unit: mapping.unit !== undefined ? (row[mapping.unit] || '') : '',
+        quantity: mapping.quantity !== undefined ? (row[mapping.quantity] || '') : '',
+        mass: mapping.mass !== undefined ? (row[mapping.mass] || '') : '',
+        note: mapping.note !== undefined ? (row[mapping.note] || '') : '',
+        originalRowsIds: [],
+        children: [],
+      }));
+
+      setSpecRows(newRows);
+
+      // Update uncertainty status
+      setColumns(prev => prev.map(col => {
+        const wasDetected = detected[col.key];
+        return { ...col, isUncertain: wasDetected ? wasDetected.isUncertain : false };
+      }));
+
     } catch (e: any) {
       setError(e.message || 'Ошибка чтения файла');
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleMapperConfirm = (mapping: Record<string, number>) => {
-    setMapperOpen(false);
-
-    const newColumns = SPEC_COLUMNS.map(col => {
-      const wasDetected = detectedMapping[col.key];
-      const isUncertain = wasDetected && wasDetected.index === mapping[col.key] ? wasDetected.isUncertain : false;
-      return { ...col, isUncertain };
-    });
-    setColumns(newColumns);
-
-    const newRows: SpecRow[] = parsedRawRows.map((row) => ({
-      id: genId(),
-      name: mapping.name !== undefined ? (row[mapping.name] || '') : '',
-      brand: mapping.brand !== undefined ? (row[mapping.brand] || '') : '',
-      code: mapping.code !== undefined ? (row[mapping.code] || '') : '',
-      supplier: mapping.supplier !== undefined ? (row[mapping.supplier] || '') : '',
-      unit: mapping.unit !== undefined ? (row[mapping.unit] || '') : '',
-      quantity: mapping.quantity !== undefined ? (row[mapping.quantity] || '') : '',
-      mass: mapping.mass !== undefined ? (row[mapping.mass] || '') : '',
-      note: mapping.note !== undefined ? (row[mapping.note] || '') : '',
-      originalRowsIds: [],
-      children: [],
-    }));
-
-    setSpecRows(newRows);
   };
 
   const handleConfirmAllHeader = useCallback(() => {
@@ -477,18 +468,6 @@ export function SpecificationPage() {
           </div>
         )}
       </div>
-
-      {/* Column mapper modal */}
-      {mapperOpen && (
-        <ColumnMapperModal
-          fileHeaders={parsedHeaders}
-          targetFields={SPEC_TARGET_FIELDS}
-          initialMapping={Object.fromEntries(Object.entries(detectedMapping).map(([k, v]) => [k, v.index]))}
-          onConfirm={handleMapperConfirm}
-          onCancel={() => setMapperOpen(false)}
-          title="Сопоставление столбцов — Спецификация"
-        />
-      )}
 
       <style>{`
         @keyframes shake {

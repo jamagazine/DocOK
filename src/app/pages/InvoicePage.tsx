@@ -5,7 +5,6 @@ import { arrayMove } from '@dnd-kit/sortable';
 import { Upload, Download, ArrowRight, RotateCcw, Calculator, Layers, Rows } from 'lucide-react';
 import { EditableTable, ColumnDef } from '../components/EditableTable';
 import { FileUploadZone } from '../components/FileUploadZone';
-import { ColumnMapperModal } from '../components/ColumnMapperModal';
 import { useData, genId, InvoiceRow } from '../context/DataContext';
 import {
   parseFile,
@@ -64,10 +63,6 @@ export function InvoicePage() {
   const [error, setError] = useState<string | null>(null);
 
   const [columns, setColumns] = useState<ColumnDef[]>(INVOICE_COLUMNS);
-  const [mapperOpen, setMapperOpen] = useState(false);
-  const [parsedHeaders, setParsedHeaders] = useState<string[]>([]);
-  const [parsedRawRows, setParsedRawRows] = useState<string[][]>([]);
-  const [detectedMapping, setDetectedMapping] = useState<Record<string, DetectedMapping>>({});
   
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [toolbarPortalNode, setToolbarPortalNode] = useState<HTMLElement | null>(null);
@@ -80,67 +75,61 @@ export function InvoicePage() {
     setLoading(true);
     setError(null);
     try {
-      const { headers, rows } = await parseFile(file);
+      const { headers, rows: parsedRawRows } = await parseFile(file);
       const detected = autoDetectMapping(headers, INVOICE_ALIASES);
-      setParsedHeaders(headers);
-      setParsedRawRows(rows);
-      setDetectedMapping(detected);
-      setMapperOpen(true);
+      
+      const mapping = Object.fromEntries(
+        Object.entries(detected).map(([key, value]) => [key, value.index])
+      );
+
+      const newRowsToAppend: InvoiceRow[] = parsedRawRows.map((row) => {
+        const r: InvoiceRow = {
+          id: genId(),
+          article: mapping.article !== undefined ? (row[mapping.article] || '') : '',
+          name: mapping.name !== undefined ? (row[mapping.name] || '') : '',
+          supplier: mapping.supplier !== undefined ? (row[mapping.supplier] || '') : '',
+          quantity: mapping.quantity !== undefined ? (row[mapping.quantity] || '') : '',
+          unit: mapping.unit !== undefined ? (row[mapping.unit] || '') : '',
+          price: mapping.price !== undefined ? (row[mapping.price] || '') : '',
+          vat: mapping.vat !== undefined ? (row[mapping.vat] || '') : '',
+          vatAmount: mapping.vatAmount !== undefined ? (row[mapping.vatAmount] || '') : '',
+          total: mapping.total !== undefined ? (row[mapping.total] || '') : '',
+        };
+
+        // Auto-calculate vatAmount and total if not mapped
+        const qtyStr = String(r.quantity).replace(/\s/g, '').replace(/,/g, '.');
+        const priceStr = String(r.price).replace(/\s/g, '').replace(/,/g, '.');
+        const vatRateStr = String(r.vat).replace(/\s/g, '').replace(/,/g, '.');
+
+        const qty = parseFloat(qtyStr) || 0;
+        const price = parseFloat(priceStr) || 0;
+        const vatRate = parseFloat(vatRateStr) || 0;
+        const subtotal = qty * price;
+
+        if (!r.vatAmount && subtotal > 0 && vatRate > 0) {
+          r.vatAmount = (subtotal * vatRate / 100).toFixed(2);
+        }
+        if (!r.total && subtotal > 0) {
+          const vatAmt = parseFloat(r.vatAmount) || 0;
+          r.total = (subtotal + vatAmt).toFixed(2);
+        }
+
+        return r;
+      });
+
+      setInvoiceRows([...invoiceRows, ...newRowsToAppend]);
+
+      // Update uncertainty status
+      setColumns(prev => prev.map(col => {
+        const wasDetected = detected[col.key];
+        return { ...col, isUncertain: wasDetected ? wasDetected.isUncertain : false };
+      }));
+
     } catch (e: any) {
       setError(e.message || 'Ошибка чтения файла');
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleMapperConfirm = (mapping: Record<string, number>) => {
-    setMapperOpen(false);
-    
-    // Update labels and uncertainty if mapper was used
-    const newColumns = INVOICE_COLUMNS.map(col => {
-      const wasDetected = detectedMapping[col.key];
-      const isUncertain = wasDetected && wasDetected.index === mapping[col.key] ? wasDetected.isUncertain : false;
-      return { ...col, isUncertain };
-    });
-    setColumns(newColumns);
-
-    const newRowsToAppend: InvoiceRow[] = parsedRawRows.map((row) => {
-      const r: InvoiceRow = {
-        id: genId(),
-        article: mapping.article !== undefined ? (row[mapping.article] || '') : '',
-        name: mapping.name !== undefined ? (row[mapping.name] || '') : '',
-        supplier: mapping.supplier !== undefined ? (row[mapping.supplier] || '') : '',
-        quantity: mapping.quantity !== undefined ? (row[mapping.quantity] || '') : '',
-        unit: mapping.unit !== undefined ? (row[mapping.unit] || '') : '',
-        price: mapping.price !== undefined ? (row[mapping.price] || '') : '',
-        vat: mapping.vat !== undefined ? (row[mapping.vat] || '') : '',
-        vatAmount: mapping.vatAmount !== undefined ? (row[mapping.vatAmount] || '') : '',
-        total: mapping.total !== undefined ? (row[mapping.total] || '') : '',
-      };
-
-      // Auto-calculate vatAmount and total if not mapped
-      const qtyStr = String(r.quantity).replace(/\s/g, '').replace(/,/g, '.');
-      const priceStr = String(r.price).replace(/\s/g, '').replace(/,/g, '.');
-      const vatRateStr = String(r.vat).replace(/\s/g, '').replace(/,/g, '.');
-
-      const qty = parseFloat(qtyStr) || 0;
-      const price = parseFloat(priceStr) || 0;
-      const vatRate = parseFloat(vatRateStr) || 0;
-      const subtotal = qty * price;
-
-      if (!r.vatAmount && subtotal > 0 && vatRate > 0) {
-        r.vatAmount = (subtotal * vatRate / 100).toFixed(2);
-      }
-      if (!r.total && subtotal > 0) {
-        const vatAmt = parseFloat(r.vatAmount) || 0;
-        r.total = (subtotal + vatAmt).toFixed(2);
-      }
-
-      return r;
-    });
-
-    // CUMULATIVE LOADING: Append to existing rows
-    setInvoiceRows([...invoiceRows, ...newRowsToAppend]);
   };
 
   const handleColumnChange = useCallback((oldKey: string, newKey: string) => {
@@ -427,17 +416,6 @@ export function InvoicePage() {
         </div>
       )}
 
-      {/* Column mapper modal */}
-      {mapperOpen && (
-        <ColumnMapperModal
-          fileHeaders={parsedHeaders}
-          targetFields={INVOICE_TARGET_FIELDS}
-          initialMapping={Object.fromEntries(Object.entries(detectedMapping).map(([k, v]) => [k, v.index]))}
-          onConfirm={handleMapperConfirm}
-          onCancel={() => setMapperOpen(false)}
-          title="Сопоставление столбцов — Счёт поставщика"
-        />
-      )}
     </div>
   );
 }
