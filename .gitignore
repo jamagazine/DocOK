@@ -1,27 +1,37 @@
-# Зависимости (самое тяжелое)
+# --- Зависимости и движки (Самое тяжелое) ---
 node_modules/
-.venv/
+python_portable/
 venv/
+.venv/
 dist/
+bin/
 
-# Окружение и портатив
-server/python_portable/
-server/bin/
-.antigravity/
-.agent/
-
-# Модели и тяжелые бинарники
-server/models/*.gguf
-*.gguf
-
-# Данные и счета
-*.pdf
+# --- Данные и временные файлы ---
+temp_output/
 extracted_text.txt
+*.pdf
+*.txt
+*.log
+*.csv
+*.xlsx
 
-# Системный мусор
+# --- Системный мусор ---
 __pycache__/
 *.pyc
 .DS_Store
+.antigravity/
+.agent/
 
-# Конфигурационные файлы
+# --- Модели и тяжелые бинарники ---
+models/
+*.gguf
+
+# --- Конфиденциально (настройки клиента) ---
+config.json
 server/config.json
+
+# --- Исключения (Что точно должно быть в Git) ---
+!package.json
+!pnpm-lock.yaml
+!requirements.txt
+!.gitignore

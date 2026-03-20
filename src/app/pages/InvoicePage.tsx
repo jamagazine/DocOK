@@ -1,8 +1,8 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router';
 import { arrayMove } from '@dnd-kit/sortable';
-import { Upload, Download, ArrowRight, RotateCcw, Calculator, Layers, Rows } from 'lucide-react';
+import { Upload, Download, ArrowRight, RotateCcw, Calculator, Layers, Rows, X, ChevronUp, Trash2, RefreshCw, Brain, CheckCircle2, Clock, AlertCircle, FileText } from 'lucide-react';
 import { EditableTable, ColumnDef } from '../components/EditableTable';
 import { FileUploadZone } from '../components/FileUploadZone';
 import { useData, genId, InvoiceRow } from '../context/DataContext';
@@ -61,75 +61,197 @@ export function InvoicePage() {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [uploadStatuses, setUploadStatuses] = useState<Record<string, { status: string; time: string }>>({});
+  const [filesMap, setFilesMap] = useState<Record<string, File>>({});
 
   const [columns, setColumns] = useState<ColumnDef[]>(INVOICE_COLUMNS);
   
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [toolbarPortalNode, setToolbarPortalNode] = useState<HTMLElement | null>(null);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [isDropZoneVisible, setIsDropZoneVisible] = useState(false);
+  const dragCounter = useRef(0);
 
   useEffect(() => {
     setToolbarPortalNode(document.getElementById('toolbar-portal'));
   }, []);
 
-  const handleFile = async (file: File) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const { headers, rows: parsedRawRows } = await parseFile(file);
-      const detected = autoDetectMapping(headers, INVOICE_ALIASES);
+  const handleFileRef = useRef<any>(null);
+
+  useEffect(() => {
+    const handleDragEnter = (e: DragEvent) => {
+      e.preventDefault();
+      // Only show overlay if we actually have a table/files (don't conflicts with default uploader)
+      if (invoiceRows.length === 0 && Object.keys(filesMap).length === 0) return;
+      dragCounter.current += 1;
+      setIsDropZoneVisible(true);
+    };
+    const handleDragOver = (e: DragEvent) => e.preventDefault();
+    const handleDragLeave = (e: DragEvent) => {
+      e.preventDefault();
+      dragCounter.current -= 1;
+      if (dragCounter.current === 0) setIsDropZoneVisible(false);
+    };
+    const handleDropWindow = async (e: DragEvent) => {
+      e.preventDefault();
+      dragCounter.current = 0;
+      setIsDropZoneVisible(false);
       
-      const mapping = Object.fromEntries(
-        Object.entries(detected).map(([key, value]) => [key, value.index])
-      );
-
-      const newRowsToAppend: InvoiceRow[] = parsedRawRows.map((row) => {
-        const r: InvoiceRow = {
-          id: genId(),
-          article: mapping.article !== undefined ? (row[mapping.article] || '') : '',
-          name: mapping.name !== undefined ? (row[mapping.name] || '') : '',
-          supplier: mapping.supplier !== undefined ? (row[mapping.supplier] || '') : '',
-          quantity: mapping.quantity !== undefined ? (row[mapping.quantity] || '') : '',
-          unit: mapping.unit !== undefined ? (row[mapping.unit] || '') : '',
-          price: mapping.price !== undefined ? (row[mapping.price] || '') : '',
-          vat: mapping.vat !== undefined ? (row[mapping.vat] || '') : '',
-          vatAmount: mapping.vatAmount !== undefined ? (row[mapping.vatAmount] || '') : '',
-          total: mapping.total !== undefined ? (row[mapping.total] || '') : '',
-        };
-
-        // Auto-calculate vatAmount and total if not mapped
-        const qtyStr = String(r.quantity).replace(/\s/g, '').replace(/,/g, '.');
-        const priceStr = String(r.price).replace(/\s/g, '').replace(/,/g, '.');
-        const vatRateStr = String(r.vat).replace(/\s/g, '').replace(/,/g, '.');
-
-        const qty = parseFloat(qtyStr) || 0;
-        const price = parseFloat(priceStr) || 0;
-        const vatRate = parseFloat(vatRateStr) || 0;
-        const subtotal = qty * price;
-
-        if (!r.vatAmount && subtotal > 0 && vatRate > 0) {
-          r.vatAmount = (subtotal * vatRate / 100).toFixed(2);
-        }
-        if (!r.total && subtotal > 0) {
-          const vatAmt = parseFloat(r.vatAmount) || 0;
-          r.total = (subtotal + vatAmt).toFixed(2);
-        }
-
-        return r;
+      const droppedFiles = Array.from(e.dataTransfer?.files || []);
+      const validFiles = droppedFiles.filter(f => {
+        const ext = '.' + f.name.split('.').pop()?.toLowerCase();
+        return (INVOICE_ALIASES.pdf as any[]).includes(ext) || (INVOICE_ALIASES.excel as any[]).includes(ext);
       });
 
-      setInvoiceRows([...invoiceRows, ...newRowsToAppend]);
+      if (validFiles.length > 0 && handleFileRef.current) {
+        for (const file of validFiles) {
+          await handleFileRef.current(file, false);
+        }
+      }
+    };
 
-      // Update uncertainty status
-      setColumns(prev => prev.map(col => {
-        const wasDetected = detected[col.key];
-        return { ...col, isUncertain: wasDetected ? wasDetected.isUncertain : false };
-      }));
+    window.addEventListener('dragenter', handleDragEnter);
+    window.addEventListener('dragover', handleDragOver);
+    window.addEventListener('dragleave', handleDragLeave);
+    window.addEventListener('drop', handleDropWindow);
+    return () => {
+      window.removeEventListener('dragenter', handleDragEnter);
+      window.removeEventListener('dragover', handleDragOver);
+      window.removeEventListener('dragleave', handleDragLeave);
+      window.removeEventListener('drop', handleDropWindow);
+    };
+  }, [invoiceRows.length, filesMap]);
 
-    } catch (e: any) {
-      setError(e.message || 'Ошибка чтения файла');
-    } finally {
-      setLoading(false);
+  const handleFile = async (file: File, forceAI: boolean = false) => {
+    setLoading(true);
+    setError(null);
+    const now = new Date();
+    const currentTime = `${now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} | ${now.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' })}`;
+    setUploadStatuses(prev => ({ ...prev, [file.name]: { status: 'Старт...', time: currentTime } }));
+
+    const isPdfOrImage = !!file.name.match(/\.(pdf|png|jpe?g)$/i);
+    const useAi = forceAI || isPdfOrImage;
+
+    if (!useAi) {
+      setUploadStatuses(prev => ({ ...prev, [file.name]: { status: 'Локальный парсинг...', time: currentTime } }));
+      try {
+        const { headers, rows: parsedRawRows } = await parseFile(file);
+        const detected = autoDetectMapping(headers, INVOICE_ALIASES);
+        
+        const mapping = Object.fromEntries(
+          Object.entries(detected).map(([key, value]) => [key, value.index])
+        );
+
+        const newRowsToAppend: InvoiceRow[] = parsedRawRows.map((row) => {
+          const r: InvoiceRow = {
+            id: genId(),
+            documentName: file.name,
+            isUncertain: false,
+            article: mapping.article !== undefined ? (row[mapping.article] || '') : '',
+            name: mapping.name !== undefined ? (row[mapping.name] || '') : '',
+            supplier: mapping.supplier !== undefined ? (row[mapping.supplier] || '') : '',
+            quantity: mapping.quantity !== undefined ? (row[mapping.quantity] || '') : '',
+            unit: mapping.unit !== undefined ? (row[mapping.unit] || '') : '',
+            price: mapping.price !== undefined ? (row[mapping.price] || '') : '',
+            vat: mapping.vat !== undefined ? (row[mapping.vat] || '') : '',
+            vatAmount: mapping.vatAmount !== undefined ? (row[mapping.vatAmount] || '') : '',
+            total: mapping.total !== undefined ? (row[mapping.total] || '') : '',
+          };
+
+          const qty = parseFloat(String(r.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+          const price = parseFloat(String(r.price).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+          const subtotal = qty * price;
+
+          if (!r.total && subtotal > 0) {
+            r.total = subtotal.toFixed(2);
+          }
+          return r;
+        });
+
+        const filtered = invoiceRows.filter((r: InvoiceRow) => r.documentName !== file.name);
+        setInvoiceRows([...filtered, ...newRowsToAppend]);
+        
+        setUploadStatuses(prev => ({ ...prev, [file.name]: { status: 'Готово (Локально)', time: currentTime } }));
+        setFilesMap(prev => ({ ...prev, [file.name]: file }));
+      } catch (e: any) {
+        setError(`Ошибка файла ${file.name}: ${e.message}`);
+        setUploadStatuses(prev => ({ ...prev, [file.name]: { status: 'Ошибка', time: currentTime } }));
+      } finally {
+        setLoading(false);
+      }
+      return; 
     }
+
+    if (useAi) {
+      setUploadStatuses(prev => ({ ...prev, [file.name]: { status: 'Конвертация и Анализ ИИ...', time: currentTime } }));
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        const res = await fetch('http://localhost:8000/api/process-invoice', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.detail || `Ошибка сервера ${res.status}`);
+        }
+
+        const data = await res.json();
+        
+        const aiRows: InvoiceRow[] = (data.items || []).map((item: any) => ({
+           id: genId(),
+           documentName: data.document?.filename || data.document?.name || file.name,
+           isUncertain: Boolean(item.isUncertain),
+           article: item.article || '',
+           name: item.name || '',
+           supplier: data.document?.metadata?.vendor || '',
+           quantity: strToNumOrBlank(item.quantity),
+           unit: item.unit || '',
+           price: strToNumOrBlank(item.price),
+           vat: '',
+           vatAmount: '',
+           total: strToNumOrBlank(item.total)
+        }));
+
+        const filtered = invoiceRows.filter((r: InvoiceRow) => r.documentName !== file.name);
+        setInvoiceRows([...filtered, ...aiRows]);
+        
+        // Auto-show uncertainty warning if any
+        if (aiRows.some(r => r.isUncertain)) {
+            setColumns(prev => prev.map(c => ({...c, isUncertain: true})));
+        }
+        
+        setUploadStatuses(prev => ({ ...prev, [file.name]: { status: 'Готово (ИИ)', time: currentTime } }));
+        setFilesMap(prev => ({ ...prev, [file.name]: file }));
+      } catch (e: any) {
+        setError(e.message || 'Ошибка обработки файла через ИИ');
+        setUploadStatuses(prev => ({ ...prev, [file.name]: { status: 'Ошибка', time: currentTime } }));
+      } finally {
+        setLoading(false);
+      }
+    }
+  };
+
+  const handleDeleteFile = (fileName: string) => {
+    setInvoiceRows(prev => prev.filter(r => r.documentName !== fileName));
+    setUploadStatuses(prev => {
+      const next = { ...prev };
+      delete next[fileName];
+      return next;
+    });
+    setFilesMap(prev => {
+      const next = { ...prev };
+      delete next[fileName];
+      return next;
+    });
+  };
+
+  const strToNumOrBlank = (v: any) => {
+     if (!v) return '';
+     const parsed = parseFloat(String(v).replace(/,/g, '.').replace(/\s/g, ''));
+     return isNaN(parsed) ? String(v) : String(parsed);
   };
 
   const handleColumnChange = useCallback((oldKey: string, newKey: string) => {
@@ -242,43 +364,52 @@ export function InvoicePage() {
     setColumns(prev => prev.map(c => ({ ...c, isUncertain: false })));
   }, []);
 
-  const groupRowsBySupplier = (rows: InvoiceRow[]) => {
+  const groupRowsByDocument = (rows: InvoiceRow[]) => {
     const groups = new Map<string, InvoiceRow[]>();
     rows.forEach(row => {
-      const s = (row.supplier || 'Не указан').trim();
-      if (!groups.has(s)) groups.set(s, []);
-      groups.get(s)!.push(row);
+      const doc = (row.documentName || 'Без документа').trim();
+      if (!groups.has(doc)) groups.set(doc, []);
+      groups.get(doc)!.push(row);
     });
 
-    return Array.from(groups.entries()).map(([supplier, children]) => {
+    return Array.from(groups.entries()).map(([docName, children]) => {
       const totalSum = children.reduce((acc, c) => acc + (parseFloat(String(c.total).replace(/\s/g, '').replace(/,/g, '.')) || 0), 0);
       const totalQty = children.reduce((acc, c) => acc + (parseFloat(String(c.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0), 0);
       
       return {
-        id: `group-${supplier}`,
+        id: `group-${docName}`,
         article: '',
-        supplier: supplier,
-        name: `Итого по поставщику`,
+        supplier: '',
+        name: `Документ: ${docName}`,
         quantity: String(totalQty),
         unit: '',
         price: '',
         vat: '',
         vatAmount: '',
         total: totalSum.toFixed(2),
-        children: children.map(c => ({ ...c, readOnly: true })), // Children are read-only
-        readOnly: true, // Parent is read-only
+        children: children.map(c => ({ ...c, readOnly: true })), 
+        readOnly: true, 
       } as any;
     });
   };
 
-  const displayRows = viewMode === 'grouped' ? groupRowsBySupplier(invoiceRows) : invoiceRows;
+  const displayRows = viewMode === 'grouped' ? groupRowsByDocument(invoiceRows) : invoiceRows;
 
   const totalSum = invoiceRows.reduce((s, r) => s + (parseFloat(String(r.total).replace(/\s/g, '').replace(/,/g, '.')) || 0), 0);
+  const totalVat = invoiceRows.reduce((s, r) => s + (parseFloat(String(r.vatAmount).replace(/\s/g, '').replace(/,/g, '.')) || 0), 0);
+  const totalQty = invoiceRows.reduce((s, r) => s + (parseFloat(String(r.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0), 0);
+  
   const hasRows = invoiceRows.length > 0;
   const hasUncertain = columns.some(c => c.isUncertain);
 
+  const fileEntries = Object.entries(uploadStatuses);
+
+  useEffect(() => {
+    handleFileRef.current = handleFile;
+  }, [handleFile]);
+
   return (
-    <div className="px-4 md:px-8 pb-4 pt-4 w-full h-[calc(100vh-110px)] flex flex-col overflow-hidden relative">
+    <div className="px-4 md:px-8 pt-4 w-full h-[calc(100vh-110px)] flex flex-col overflow-hidden relative pb-24">
       
       {/* Toolbar Portal Render */}
       {toolbarPortalNode && createPortal(
@@ -286,14 +417,15 @@ export function InvoicePage() {
           <input
             id="invoice-file-input-toolbar"
             type="file"
-            accept=".xlsx,.xls,.csv,.pdf"
+            accept=".xlsx,.xls,.csv,.pdf,.png,.jpg,.jpeg"
             className="hidden"
             onChange={(e) => {
               const f = e.target.files?.[0];
-              if (f) handleFile(f);
+              if (f) handleFile(f, false);
               e.target.value = '';
             }}
           />
+
 
           {hasRows && (
             <>
@@ -316,7 +448,7 @@ export function InvoicePage() {
                 <button
                   onClick={() => document.getElementById('invoice-file-input-toolbar')?.click()}
                   className="group relative flex-1 hover:flex-[2.3] flex items-center transition-all duration-300 ease-in-out cursor-pointer hover:bg-blue-50 border-r border-gray-100 text-gray-600 hover:text-blue-600"
-                  title="Загрузить новый файл"
+                  title="Загрузить файл"
                 >
                   <div className="absolute left-1/2 -translate-x-1/2 group-hover:left-[18px] group-hover:translate-x-0 transition-all duration-300 flex items-center justify-center shrink-0">
                     <Upload size={16} />
@@ -377,10 +509,42 @@ export function InvoicePage() {
       )}
 
       {/* Main Table Area */}
-      <div className="flex-1 min-h-0 bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden flex flex-col relative">
+      <div className="flex-1 min-h-0 bg-white rounded-2xl border border-gray-100 shadow-[0_4px_20px_rgba(0,0,0,0.02)] overflow-hidden flex flex-col relative mb-16">
+        {/* Global Drag and Drop Overlay */}
+        {isDropZoneVisible && (hasRows || fileEntries.length > 0) && (
+          <div 
+            className="absolute inset-0 z-[100] bg-blue-50/80 backdrop-blur-[4px] border-[3px] border-blue-400 border-dashed m-6 rounded-3xl flex flex-col items-center justify-center animate-in fade-in duration-200"
+            onDrop={async (e) => {
+              e.preventDefault();
+              dragCounter.current = 0;
+              setIsDropZoneVisible(false);
+              const droppedFiles = Array.from(e.dataTransfer.files);
+              const validFiles = droppedFiles.filter(f => {
+                const ext = '.' + f.name.split('.').pop()?.toLowerCase();
+                return INVOICE_ALIASES.pdf.includes(ext as any) || INVOICE_ALIASES.excel.includes(ext as any);
+              });
+              for (const file of validFiles) {
+                await handleFile(file, false);
+              }
+            }}
+            onDragOver={(e) => e.preventDefault()}
+          >
+            <Upload size={54} className="text-blue-500 mb-4 animate-bounce" />
+            <h2 className="text-2xl font-bold text-blue-700">Добавить документы</h2>
+            <p className="text-blue-600/70 mt-3 font-medium text-sm text-center max-w-sm">
+              Отпустите файлы здесь, и мы моментально добавим их к текущей спецификации
+            </p>
+          </div>
+        )}
+
         {!hasRows ? (
-          <div className="flex-1 flex flex-col items-center justify-center p-8 bg-gray-50/20 shadow-inner">
+          <div className="flex-1 flex flex-col items-center justify-center p-8 bg-gray-50/20 shadow-inner gap-6">
              <FileUploadZone onFile={handleFile} loading={loading} />
+             <p className="text-center text-xs text-gray-400 max-w-md leading-relaxed animate-in fade-in slide-in-from-bottom-2 duration-700 delay-300">
+               Рекомендуется использовать оригинальные PDF-счета для максимальной точности. 
+               При использовании сканов используйте разрешение не менее 300 DPI. 
+               Сомнительные данные будут выделены желтым цветом.
+             </p>
           </div>
         ) : (
           <div className="flex-1 flex flex-col min-h-0 animate-in fade-in duration-700">
@@ -400,19 +564,88 @@ export function InvoicePage() {
         )}
       </div>
 
-      {/* Totals Section */}
-      {hasRows && (
-        <div className="mt-4 flex justify-end gap-12 text-sm font-semibold text-gray-500 bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
-           <div className="flex items-center gap-3">
-             <span>Позиций:</span>
-             <span className="text-gray-900">{invoiceRows.length}</span>
-           </div>
-           <div className="flex items-center gap-3">
-             <span>Итого к оплате:</span>
-             <span className="text-blue-600 text-lg">
-               {totalSum.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₽
-             </span>
-           </div>
+      {/* File Drawer Overlay (Positioned BEHIND footer using z-index) */}
+      {(hasRows || fileEntries.length > 0) && isDrawerOpen && (
+          <div className="fixed bottom-16 left-4 w-[35%] bg-white border-t border-l border-r border-gray-200 rounded-t-2xl shadow-[0_-10px_40px_rgba(0,0,0,0.08)] z-[50] animate-in slide-in-from-bottom-12 duration-300 max-h-[400px] flex flex-col overflow-hidden">
+            <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+                <h3 className="font-bold text-gray-700 flex items-center gap-2">
+                  <FileText size={18} className="text-blue-500" />
+                  Загруженные документы
+                </h3>
+                <button 
+                  onClick={() => setIsDrawerOpen(false)}
+                  className="p-1 hover:bg-gray-200 rounded-lg text-gray-500 transition-colors"
+                >
+                  <X size={20} />
+                </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-2 space-y-1 text-xs">
+                {fileEntries.length === 0 ? (
+                  <div className="py-12 text-center text-gray-400 italic">
+                    Список файлов пуст
+                  </div>
+                ) : (
+                  fileEntries.map(([filename, data]) => (
+                    <div key={filename} className="flex flex-col p-3 hover:bg-gray-50 rounded-xl transition-colors group">
+                       <div className="flex items-center gap-3 mb-1">
+                          {data.status.includes('Ошибка') ? <AlertCircle size={18} className="text-red-500 shrink-0" /> 
+                           : data.status.includes('Готово') ? <CheckCircle2 size={18} className="text-green-500 shrink-0" />
+                           : <Clock size={18} className="text-blue-500 animate-pulse shrink-0" />}
+                          
+                          <span className="font-bold text-[14px] text-gray-800 truncate flex-1">{filename}</span>
+                          
+                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity ml-auto">
+                            <button 
+                              onClick={() => filesMap[filename] && handleFile(filesMap[filename], false)}
+                              className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-all"
+                              title="Обновить"
+                            >
+                              <RefreshCw size={18} />
+                            </button>
+                            <button 
+                              onClick={() => filesMap[filename] && handleFile(filesMap[filename], true)}
+                              disabled={data.status.includes('ИИ')}
+                              className={`p-1.5 rounded transition-all ${data.status.includes('ИИ') ? 'text-purple-500 bg-purple-50' : 'text-gray-400 hover:text-purple-600 hover:bg-purple-50'}`}
+                              title="ИИ Анализ"
+                            >
+                              <Brain size={18} />
+                            </button>
+                            <button 
+                              onClick={() => handleDeleteFile(filename)}
+                              className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-all"
+                              title="Удалить"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          </div>
+                       </div>
+                       <div className="flex items-center gap-2 ml-[30px]">
+                          <span className="text-[10px] text-gray-400 font-medium tabular-nums">{data.time}</span>
+                          <span className="w-1 h-1 bg-gray-300 rounded-full" />
+                          <span className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">{data.status}</span>
+                       </div>
+                    </div>
+                  ))
+                )}
+            </div>
+          </div>
+      )}
+
+      {/* Global Bottom Navigation Bar */}
+      {(hasRows || fileEntries.length > 0) && (
+        <div className="fixed bottom-0 left-0 right-0 h-16 bg-white border-t border-gray-200 z-[60] shadow-[0_-8px_30px_rgba(0,0,0,0.05)] flex items-center px-6">
+            <button 
+               onClick={() => setIsDrawerOpen(!isDrawerOpen)}
+               className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all border text-xs ${
+                 isDrawerOpen 
+                  ? 'bg-blue-50 border-blue-200 text-blue-700' 
+                  : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+               }`}
+            >
+               <Layers size={14} className={isDrawerOpen ? 'animate-bounce' : ''} />
+               <span className="font-bold">Файлы: {fileEntries.length}</span>
+               <ChevronUp size={14} className={`transition-transform duration-300 ${isDrawerOpen ? 'rotate-180' : ''}`} />
+            </button>
         </div>
       )}
 

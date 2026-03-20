@@ -294,6 +294,17 @@ export function EditableTable({
     .filter((x) => !x.c.readOnly)
     .map((x) => x.i);
 
+  const totals = useMemo(() => {
+    return rows.reduce((acc, row) => {
+      const parse = (v: any) => parseFloat(String(v || '0').replace(/\s/g, '').replace(',', '.')) || 0;
+      return {
+        quantity: acc.quantity + parse(row.quantity),
+        vatAmount: acc.vatAmount + parse(row.vatAmount),
+        total: acc.total + parse(row.total)
+      };
+    }, { quantity: 0, vatAmount: 0, total: 0 });
+  }, [rows]);
+
   const startEdit = useCallback((row: number, col: number) => {
     setEditingCell({ row, col });
   }, []);
@@ -460,7 +471,7 @@ export function EditableTable({
 
                 return (
                   <Fragment key={row.id || rowIndex}>
-                    <tr className="border-b border-gray-100 last:border-b-0 group hover:bg-gray-50/50">
+                    <tr className={`border-b border-gray-100 last:border-b-0 group transition-colors ${row.isUncertain ? 'bg-yellow-100/60 hover:bg-yellow-100' : 'hover:bg-gray-50/50'}`}>
                       <td className="px-2 py-0 text-xs text-gray-300 border-r border-gray-100 select-none w-10 text-center relative">
                         <div className="flex items-center justify-center relative w-full h-full min-h-[34px]">
                           {isMerged && (
@@ -546,6 +557,38 @@ export function EditableTable({
               })
             )}
           </tbody>
+          {rows.length > 0 && (
+            <tfoot className="sticky bottom-0 z-20 bg-white shadow-[0_-4px_10px_rgba(0,0,0,0.03)] border-t-2 border-gray-200 font-bold text-gray-800">
+              <tr className="divide-x divide-gray-200">
+                <td className="bg-gray-50 border-r border-gray-200" />
+                {columns.map((col) => {
+                  const isTotalCol = ['quantity', 'vatAmount', 'total'].includes(col.key);
+                  const isNameCol = col.key === 'name';
+                  return (
+                    <td 
+                      key={col.key} 
+                      className={`px-3 py-3 border-r border-gray-200 last:border-r-0 text-right tabular-nums text-xs
+                        ${isTotalCol || isNameCol ? 'bg-blue-50/30' : ''}`}
+                    >
+                      {isTotalCol && (
+                        totals[col.key as keyof typeof totals].toLocaleString('ru-RU', { 
+                          minimumFractionDigits: col.key === 'quantity' ? 0 : 2, 
+                          maximumFractionDigits: 2 
+                        })
+                      )}
+                      {isNameCol && (
+                        <div className="flex items-center gap-2 justify-end text-gray-400 font-medium whitespace-nowrap">
+                          <span>Всего позиций:</span>
+                          <span className="text-gray-900 font-bold">{rows.length}</span>
+                        </div>
+                      )}
+                    </td>
+                  );
+                })}
+                <td className="bg-gray-50" />
+              </tr>
+            </tfoot>
+          )}
         </table>
         </SortableContext>
         </DndContext>
@@ -558,20 +601,6 @@ export function EditableTable({
           Добавить строку
         </button>
       </div>
-
-      {/* Footer - Fixed at the bottom of the component */}
-      {rows.length > 0 && (
-        <div 
-          className="z-30 bg-white border-t border-gray-200 px-6 py-3.5 flex justify-end text-sm text-gray-500 font-semibold shadow-[0_-8px_30px_rgb(0,0,0,0.04)] ring-1 ring-black/5 ring-inset shrink-0"
-        >
-          <div className="flex items-center gap-3">
-            <span className="text-gray-400 font-medium">Всего позиций:</span>
-            <span className="text-blue-600 bg-blue-50 px-2.5 py-0.5 rounded-full font-bold tabular-nums">
-              {rows.length}
-            </span>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

@@ -19,6 +19,8 @@ export interface SpecRow extends MaterialPosition {
 
 export interface InvoiceRow {
   id: string;
+  documentName?: string;
+  isUncertain?: boolean;
   article: string;
   name: string;
   supplier: string;
@@ -45,11 +47,11 @@ interface DataContextType {
   projectName: string;
   setProjectName: (name: string) => void;
   specRows: SpecRow[];
-  setSpecRows: (rows: SpecRow[]) => void;
+  setSpecRows: React.Dispatch<React.SetStateAction<SpecRow[]>>;
   invoiceRows: InvoiceRow[];
-  setInvoiceRows: (rows: InvoiceRow[]) => void;
+  setInvoiceRows: React.Dispatch<React.SetStateAction<InvoiceRow[]>>;
   estimateRows: EstimateRow[];
-  setEstimateRows: (rows: EstimateRow[]) => void;
+  setEstimateRows: React.Dispatch<React.SetStateAction<EstimateRow[]>>;
   configKeys: Record<string, string>;
   setConfigKeys: (keys: Record<string, string>) => void;
   yandexConfig: YandexConfig;
