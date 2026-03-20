@@ -74,8 +74,42 @@ export function Layout() {
     if (syncError) setSyncError(false);
   }, [localApiKey, localFolderId, syncError]);
 
-  const handleSaveSettings = () => {
-    // 1. Instant Optimistic UI Update
+  const handleSaveSettings = async () => {
+    // 1. Initial State
+    setSaveStatus('idle');
+    setSyncError(false);
+
+    // 2. Data Sync (Awaited)
+    const config = { apiKey: localApiKey, folderId: localFolderId };
+    saveYandexConfig(config);
+    
+    try {
+      const res = await fetch('http://localhost:8000/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          keys: { 
+            YANDEX_API_KEY: localApiKey, 
+            YANDEX_FOLDER_ID: localFolderId 
+          } 
+        }),
+      });
+
+      if (!res.ok) throw new Error('API Sync Error');
+      setSyncError(false);
+    } catch (e) {
+      console.error('Failed to sync config to backend:', e);
+      setSyncError(true);
+      setSaveStatus('error');
+      // On network error, still close eventually as requested
+      setTimeout(() => {
+        setIsSettingsOpen(false);
+        setSaveStatus('idle');
+      }, 1500);
+      return;
+    }
+
+    // 3. UI Feedback and Closure AFTER Response
     if (currentIsFully) {
       setSaveStatus('success');
       setTimeout(() => {
@@ -84,8 +118,11 @@ export function Layout() {
       }, 300);
     } else if (currentIsPartial) {
       setSaveStatus('error');
-      // Do NOT hide panel
-      setTimeout(() => setSaveStatus('idle'), 1500);
+      // As requested: close after response, but give time to see the error
+      setTimeout(() => {
+        setIsSettingsOpen(false);
+        setSaveStatus('idle');
+      }, 1500);
     } else {
       // currentIsNone
       setSaveStatus('warning');
@@ -94,29 +131,6 @@ export function Layout() {
         setSaveStatus('idle');
       }, 300);
     }
-
-    // 2. Background Data Sync (Fire and Forget)
-    const config = { apiKey: localApiKey, folderId: localFolderId };
-    saveYandexConfig(config);
-    
-    fetch('http://localhost:8000/api/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        keys: { 
-          YANDEX_API_KEY: localApiKey, 
-          YANDEX_FOLDER_ID: localFolderId 
-        } 
-      }),
-    })
-    .then(async (res) => {
-      if (!res.ok) throw new Error('API Sync Error');
-      setSyncError(false);
-    })
-    .catch(e => {
-      console.error('Failed to sync config to backend:', e);
-      setSyncError(true);
-    });
   };
 
   const activeIndex = STEPS.findIndex((s) => {
