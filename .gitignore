@@ -1,0 +1,24 @@
+# Зависимости (самое тяжелое)
+node_modules/
+.venv/
+venv/
+dist/
+
+# Окружение и портатив
+server/python_portable/
+.antigravity/
+.agent/
+
+# Модели и тяжелые бинарники
+server/models/*.gguf
+*.gguf
+
+# Данные и счета
+*.pdf
+extracted_text.txt
+
+# Системный мусор
+__pycache__/
+*.pyc
+.DS_Store
+
