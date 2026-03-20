@@ -404,6 +404,21 @@ export function InvoicePage() {
 
   const fileEntries = Object.entries(uploadStatuses);
 
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+  const totalsScrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const tableEl = tableScrollRef.current;
+    if (!tableEl) return;
+    const handleScroll = () => {
+      if (totalsScrollRef.current) {
+        totalsScrollRef.current.scrollLeft = tableEl.scrollLeft;
+      }
+    };
+    tableEl.addEventListener('scroll', handleScroll);
+    return () => tableEl.removeEventListener('scroll', handleScroll);
+  }, [invoiceRows.length]);
+
   useEffect(() => {
     handleFileRef.current = handleFile;
   }, [handleFile]);
@@ -509,7 +524,7 @@ export function InvoicePage() {
       )}
 
       {/* Main Table Area */}
-      <div className="flex-1 min-h-0 bg-white rounded-2xl border border-gray-100 shadow-[0_4px_20px_rgba(0,0,0,0.02)] overflow-hidden flex flex-col relative mb-16">
+      <div className="flex-1 min-h-0 bg-white rounded-2xl border border-gray-100 shadow-[0_4px_20px_rgba(0,0,0,0.02)] overflow-hidden flex flex-col relative mb-[104px]">
         {/* Global Drag and Drop Overlay */}
         {isDropZoneVisible && (hasRows || fileEntries.length > 0) && (
           <div 
@@ -559,6 +574,7 @@ export function InvoicePage() {
               onColumnConfirm={handleColumnConfirm}
               onColumnOrderChange={handleColumnOrderChange}
               emptyMessage="Добавьте строки вручную или загрузите файл счёта."
+              scrollRef={tableScrollRef}
             />
           </div>
         )}
@@ -566,7 +582,7 @@ export function InvoicePage() {
 
       {/* File Drawer Overlay (Positioned BEHIND footer using z-index) */}
       {(hasRows || fileEntries.length > 0) && isDrawerOpen && (
-          <div className="fixed bottom-16 left-4 w-[35%] bg-white border-t border-l border-r border-gray-200 rounded-t-2xl shadow-[0_-10px_40px_rgba(0,0,0,0.08)] z-[50] animate-in slide-in-from-bottom-12 duration-300 max-h-[400px] flex flex-col overflow-hidden">
+          <div className={`fixed left-4 w-[35%] bg-white border-t border-l border-r border-gray-200 rounded-t-2xl shadow-[0_-10px_40px_rgba(0,0,0,0.08)] z-[50] animate-in slide-in-from-bottom-12 duration-300 max-h-[400px] flex flex-col overflow-hidden transition-all ${hasRows ? 'bottom-[104px]' : 'bottom-16'}`}>
             <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
                 <h3 className="font-bold text-gray-700 flex items-center gap-2">
                   <FileText size={18} className="text-blue-500" />
@@ -631,11 +647,61 @@ export function InvoicePage() {
           </div>
       )}
 
-      {/* Global Bottom Navigation Bar */}
+      {/* Global Bottom Navigation Bar & Totals */}
       {(hasRows || fileEntries.length > 0) && (
-        <div className="fixed bottom-0 left-0 right-0 h-16 bg-white border-t border-gray-200 z-[60] shadow-[0_-8px_30px_rgba(0,0,0,0.05)] flex items-center px-6">
-            <button 
-               onClick={() => setIsDrawerOpen(!isDrawerOpen)}
+        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-[60] shadow-[0_-8px_30px_rgba(0,0,0,0.05)] flex flex-col">
+            {hasRows && (
+              <div className="w-full border-b border-gray-100 bg-white">
+                <div className="px-4 md:px-8 mx-auto w-full flex flex-col relative">
+                  {/* Totals table synchronized with Main Table */}
+                  <div 
+                    ref={totalsScrollRef}
+                    className="overflow-hidden"
+                    style={{ minWidth: columns.reduce((sum, c) => sum + (c.width || 120), 0) + 80 }}
+                  >
+                    <table className="w-full border-collapse" style={{ tableLayout: 'fixed' }}>
+                      <tbody>
+                        <tr className="divide-x divide-gray-200 text-xs font-bold text-gray-800">
+                          <td className="w-10 bg-gray-50 border-r border-gray-200" />
+                          {columns.map((col) => {
+                            const isTotalCol = ['quantity', 'vatAmount', 'total'].includes(col.key);
+                            const isNameCol = col.key === 'name';
+                            return (
+                              <td 
+                                key={col.key} 
+                                style={{ width: col.width || 120, minWidth: col.width || 120, maxWidth: col.width || 120 }}
+                                className={`px-3 py-3 border-r border-gray-200 last:border-r-0 text-right tabular-nums truncate
+                                  ${isTotalCol || isNameCol ? 'bg-blue-50/30' : ''}`}
+                              >
+                                {isTotalCol && (
+                                  <span className={col.key === 'total' ? 'text-blue-600' : ''}>
+                                    {col.key === 'quantity' 
+                                      ? totalQty.toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 2 })
+                                      : col.key === 'vatAmount'
+                                      ? totalVat.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                                      : totalSum.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </span>
+                                )}
+                                {isNameCol && (
+                                  <div className="flex items-center gap-2 justify-end text-gray-400 font-medium whitespace-nowrap">
+                                    <span>Всего позиций:</span>
+                                    <span className="text-gray-900 font-bold ml-1">{invoiceRows.length}</span>
+                                  </div>
+                                )}
+                              </td>
+                            );
+                          })}
+                          <td className="w-10 bg-gray-50" />
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+            <div className="h-16 flex items-center px-6 w-full relative">
+              <button 
+                 onClick={() => setIsDrawerOpen(!isDrawerOpen)}
                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all border text-xs ${
                  isDrawerOpen 
                   ? 'bg-blue-50 border-blue-200 text-blue-700' 
@@ -646,9 +712,9 @@ export function InvoicePage() {
                <span className="font-bold">Файлы: {fileEntries.length}</span>
                <ChevronUp size={14} className={`transition-transform duration-300 ${isDrawerOpen ? 'rotate-180' : ''}`} />
             </button>
+          </div>
         </div>
       )}
-
     </div>
   );
 }
