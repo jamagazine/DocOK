@@ -6,6 +6,7 @@ dist/
 
 # Окружение и портатив
 server/python_portable/
+server/bin/
 .antigravity/
 .agent/
 
@@ -22,3 +23,5 @@ __pycache__/
 *.pyc
 .DS_Store
 
+# Конфигурационные файлы
+server/config.json

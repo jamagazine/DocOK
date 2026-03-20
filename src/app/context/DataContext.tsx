@@ -1,7 +1,10 @@
 import React, { createContext, useContext, useState, ReactNode } from 'react';
 import { MaterialPosition } from '../utils/fileUtils';
 
-
+export interface YandexConfig {
+  apiKey: string;
+  folderId: string;
+}
 export function genId(): string {
   return typeof crypto !== 'undefined' && crypto.randomUUID
     ? crypto.randomUUID()
@@ -47,6 +50,10 @@ interface DataContextType {
   setInvoiceRows: (rows: InvoiceRow[]) => void;
   estimateRows: EstimateRow[];
   setEstimateRows: (rows: EstimateRow[]) => void;
+  configKeys: Record<string, string>;
+  setConfigKeys: (keys: Record<string, string>) => void;
+  yandexConfig: YandexConfig;
+  saveYandexConfig: (config: YandexConfig) => void;
 }
 
 const DataContext = createContext<DataContextType | null>(null);
@@ -56,6 +63,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [specRows, setSpecRows] = useState<SpecRow[]>([]);
   const [invoiceRows, setInvoiceRows] = useState<InvoiceRow[]>([]);
   const [estimateRows, setEstimateRows] = useState<EstimateRow[]>([]);
+  const [configKeys, setConfigKeys] = useState<Record<string, string>>({});
+  const [yandexConfig, setYandexConfig] = useState<YandexConfig>(() => {
+    const saved = localStorage.getItem('docok_yandex_config');
+    return saved ? JSON.parse(saved) : { apiKey: '', folderId: '' };
+  });
+
+  const saveYandexConfig = (config: YandexConfig) => {
+    setYandexConfig(config);
+    localStorage.setItem('docok_yandex_config', JSON.stringify(config));
+  };
 
   return (
     <DataContext.Provider
@@ -68,6 +85,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
         setInvoiceRows,
         estimateRows,
         setEstimateRows,
+        configKeys,
+        setConfigKeys,
+        yandexConfig,
+        saveYandexConfig,
       }}
     >
       {children}

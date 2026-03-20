@@ -1,0 +1,7 @@
+{
+    "python.defaultInterpreterPath": "server\\python_portable\\python.exe",
+    "python.terminal.activateEnvInCurrentTerminal": true,
+    "python.analysis.extraPaths": [
+        "./server/python_portable/Lib/site-packages"
+    ]
+}
