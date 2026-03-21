@@ -262,7 +262,6 @@ interface EditableTableProps {
   onColumnConfirm?: (key: string) => void;
   onColumnOrderChange?: (activeKey: string, overKey: string) => void;
   onUnmerge?: (parentId: string, childId: string) => void;
-  scrollRef?: React.RefObject<HTMLDivElement | null>;
 }
 
 export function EditableTable({
@@ -277,7 +276,6 @@ export function EditableTable({
   onColumnConfirm,
   onColumnOrderChange,
   onUnmerge,
-  scrollRef,
 }: EditableTableProps) {
   const [editingCell, setEditingCell] = useState<{
     row: number;
@@ -295,6 +293,17 @@ export function EditableTable({
     .map((c, i) => ({ c, i }))
     .filter((x) => !x.c.readOnly)
     .map((x) => x.i);
+
+  const totals = useMemo(() => {
+    return rows.reduce((acc, row) => {
+      const parse = (v: any) => parseFloat(String(v || '0').replace(/\s/g, '').replace(',', '.')) || 0;
+      return {
+        quantity: acc.quantity + parse(row.quantity),
+        vatAmount: acc.vatAmount + parse(row.vatAmount),
+        total: acc.total + parse(row.total)
+      };
+    }, { quantity: 0, vatAmount: 0, total: 0 });
+  }, [rows]);
 
   const startEdit = useCallback((row: number, col: number) => {
     setEditingCell({ row, col });
@@ -406,11 +415,7 @@ export function EditableTable({
 
   return (
     <div ref={tableRef} className="relative h-full overflow-hidden border border-gray-200 rounded-lg bg-white flex flex-col">
-      <div 
-        ref={scrollRef}
-        className="flex-1 overflow-auto" 
-        style={{ minWidth: totalMinWidth }}
-      >
+      <div className="flex-1 overflow-auto" style={{ minWidth: totalMinWidth }}>
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}
@@ -552,6 +557,38 @@ export function EditableTable({
               })
             )}
           </tbody>
+          {rows.length > 0 && (
+            <tfoot className="sticky bottom-0 z-20 bg-white shadow-[0_-4px_10px_rgba(0,0,0,0.03)] border-t-2 border-gray-200 font-bold text-gray-800">
+              <tr className="divide-x divide-gray-200">
+                <td className="bg-gray-50 border-r border-gray-200" />
+                {columns.map((col) => {
+                  const isTotalCol = ['quantity', 'vatAmount', 'total'].includes(col.key);
+                  const isNameCol = col.key === 'name';
+                  return (
+                    <td 
+                      key={col.key} 
+                      className={`px-3 py-3 border-r border-gray-200 last:border-r-0 text-right tabular-nums text-xs
+                        ${isTotalCol || isNameCol ? 'bg-blue-50/30' : ''}`}
+                    >
+                      {isTotalCol && (
+                        totals[col.key as keyof typeof totals].toLocaleString('ru-RU', { 
+                          minimumFractionDigits: col.key === 'quantity' ? 0 : 2, 
+                          maximumFractionDigits: 2 
+                        })
+                      )}
+                      {isNameCol && (
+                        <div className="flex items-center gap-2 justify-end text-gray-400 font-medium whitespace-nowrap">
+                          <span>Всего позиций:</span>
+                          <span className="text-gray-900 font-bold">{rows.length}</span>
+                        </div>
+                      )}
+                    </td>
+                  );
+                })}
+                <td className="bg-gray-50" />
+              </tr>
+            </tfoot>
+          )}
         </table>
         </SortableContext>
         </DndContext>
